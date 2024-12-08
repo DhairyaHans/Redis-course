@@ -1,9 +1,27 @@
 import type { CreateUserAttrs } from '$services/types';
 import { genId } from '$services/utils';
 import { client } from '$services/redis';
-import { usersKey, usernamesUniqueKey } from '$services/keys';
+import { usersKey, usernamesUniqueKey, usernamesKey } from '$services/keys';
 
-export const getUserByUsername = async (username: string) => {};
+export const getUserByUsername = async (username: string) => {
+    // Use the username argument to look up the person ID
+    // from the sorted set
+    const decimalId = await client.zScore(usernamesKey(), username)
+    
+    // check if we actually got some user ID from the sorted set
+    if (!decimalId){
+        throw new Error('User does not exist')
+    }
+
+    // convert the integer(Base 10) ID to hexadecimal (Base 16)
+    const hexID = decimalId.toString(16)
+
+    // Take the ID to look into the user's hash
+    const user = await client.hGetAll(usersKey(hexID))
+
+    // Deserialize the user Hash and return it
+    return deserialize(hexID, user)
+};
 
 export const getUserById = async (id: string) => {
     const user = await client.hGetAll(usersKey(id))
@@ -26,6 +44,10 @@ export const createUser = async (attrs: CreateUserAttrs) => {
 
     await client.hSet( usersKey(id), serialize(attrs))
     await client.SADD(usernamesUniqueKey(), attrs.username)
+    await client.zAdd(usernamesKey(), {
+        value: attrs.username,
+        score: parseInt(id, 16)  // Convert the hexadecimal id (Base 16) to Base 10 integer 
+    })
 
     return id
 };
